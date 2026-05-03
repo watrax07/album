@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Album Mundial 2026</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <main class="app">
+      <section id="setupPanel" class="auth-card hidden">
+        <h1>Falta configurar Supabase</h1>
+        <p>Antes de publicar, crea tu proyecto en Supabase, pega tus claves en <strong>supabase-config.js</strong> y ejecuta el SQL incluido.</p>
+      </section>
+
+      <section id="authPanel" class="auth-card hidden">
+        <p>Album Mundial 2026</p>
+        <h1>Entrar</h1>
+        <form id="authForm">
+          <label>
+            <span>Correo</span>
+            <input id="authEmail" type="email" autocomplete="email" required>
+          </label>
+          <label>
+            <span>Contrasena</span>
+            <input id="authPassword" type="password" autocomplete="current-password" minlength="6" required>
+          </label>
+          <button id="loginButton" type="submit">Entrar</button>
+          <button id="signupButton" class="secondary" type="button">Crear cuenta</button>
+        </form>
+        <span id="authMessage" class="auth-message"></span>
+      </section>
+
+      <section id="appPanel" class="hidden">
+      <header class="top">
+        <div>
+          <p>Album Mundial 2026</p>
+          <h1>Mis estampas</h1>
+          <span id="userEmail" class="user-email"></span>
+        </div>
+        <div class="score">
+          <strong id="ownedCount">0</strong>
+          <span id="totalCount">/ 0</span>
+        </div>
+      </header>
+
+      <section class="controls">
+        <div class="tabs" role="tablist" aria-label="Vista">
+          <button class="active" type="button" data-view="missing">Me faltan</button>
+          <button type="button" data-view="owned">Ya tengo</button>
+          <button type="button" data-view="all">Todas</button>
+        </div>
+
+        <label class="search">
+          <span>Buscar estampa</span>
+          <input id="searchInput" type="search" placeholder="FWC, MEX, 021, Mexico...">
+        </label>
+
+        <div class="actions">
+          <button id="downloadWord" type="button">Word</button>
+          <button id="downloadPdf" type="button">PDF</button>
+          <button id="resetAll" class="quiet" type="button">Reiniciar</button>
+          <button id="logoutButton" class="quiet" type="button">Salir</button>
+        </div>
+      </section>
+
+      <section class="list-panel">
+        <div class="list-head">
+          <h2 id="viewTitle">Me faltan</h2>
+          <span id="resultCount">Cargando...</span>
+        </div>
+        <div id="stickerList" class="section-list" aria-live="polite"></div>
+      </section>
+      </section>
+    </main>
+
+    <template id="stickerTemplate">
+      <button class="sticker-chip" type="button">
+        <span class="mark" aria-hidden="true"></span>
+        <div class="sticker-text">
+          <strong></strong>
+          <span></span>
+        </div>
+      </button>
+    </template>
+
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="supabase-config.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
