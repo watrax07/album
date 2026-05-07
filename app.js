@@ -122,18 +122,28 @@ async function loadCloudState() {
 
   if (ownedError) throw ownedError;
 
-  const { data: repeatData, error: repeatError } = await state.client
-    .from("user_repeated_stickers")
-    .select("sticker_code, quantity")
-    .gt("quantity", 0);
-
-  if (repeatError) {
-    console.warn("No se pudieron cargar repetidas. Ejecuta supabase-schema.sql completo.", repeatError);
-  }
-
   state.owned = new Set((ownedData || []).map((row) => row.sticker_code));
-  state.repeats = new Map((repeatData || []).map((row) => [row.sticker_code, Number(row.quantity || 0)]));
+  state.repeats = await loadRepeatsSafely();
   saveLocalSnapshot();
+}
+
+async function loadRepeatsSafely() {
+  try {
+    const { data, error } = await state.client
+      .from("user_repeated_stickers")
+      .select("sticker_code, quantity")
+      .gt("quantity", 0);
+
+    if (error) {
+      console.warn("No se pudieron cargar repetidas. Ejecuta supabase-schema.sql completo.", error);
+      return new Map();
+    }
+
+    return new Map((data || []).map((row) => [row.sticker_code, Number(row.quantity || 0)]));
+  } catch (error) {
+    console.warn("No se pudieron cargar repetidas. Ejecuta supabase-schema.sql completo.", error);
+    return new Map();
+  }
 }
 
 function normalizeSticker(item) {
