@@ -4,11 +4,15 @@ const STORAGE_KEY_PREFIX = "mundial-2026-album-state";
 const state = {
   stickers: [],
   owned: new Set(),
+  repeats: new Map(),
+  pending: new Set(),
   view: "missing",
   search: "",
   user: null,
   client: null,
-  saving: false
+  scannerStream: null,
+  scannerTimer: null,
+  lastScan: ""
 };
 
 const els = {
@@ -23,6 +27,7 @@ const els = {
   logoutButton: document.querySelector("#logoutButton"),
   userEmail: document.querySelector("#userEmail"),
   ownedCount: document.querySelector("#ownedCount"),
+  repeatCount: document.querySelector("#repeatCount"),
   totalCount: document.querySelector("#totalCount"),
   searchInput: document.querySelector("#searchInput"),
   resultCount: document.querySelector("#resultCount"),
@@ -31,6 +36,13 @@ const els = {
   template: document.querySelector("#stickerTemplate"),
   downloadWord: document.querySelector("#downloadWord"),
   downloadPdf: document.querySelector("#downloadPdf"),
+  scanButton: document.querySelector("#scanButton"),
+  scannerPanel: document.querySelector("#scannerPanel"),
+  scannerVideo: document.querySelector("#scannerVideo"),
+  closeScanner: document.querySelector("#closeScanner"),
+  manualRepeatForm: document.querySelector("#manualRepeatForm"),
+  manualRepeatInput: document.querySelector("#manualRepeatInput"),
+  scannerMessage: document.querySelector("#scannerMessage"),
   resetAll: document.querySelector("#resetAll")
 };
 
@@ -61,12 +73,15 @@ async function init() {
 }
 
 function hasSupabaseConfig() {
+  const url = String(window.ALBUM_SUPABASE?.url || "").toLowerCase();
+  const anonKey = String(window.ALBUM_SUPABASE?.anonKey || "").toLowerCase();
+
   return Boolean(
     window.supabase &&
-    window.ALBUM_SUPABASE?.url &&
-    window.ALBUM_SUPABASE?.anonKey &&
-    !window.ALBUM_SUPABASE.url.includes("TU-PROYECTO") &&
-    !window.ALBUM_SUPABASE.anonKey.includes("TU-ANON-KEY")
+    url &&
+    anonKey &&
+    !url.includes("tu-proyecto") &&
+    !anonKey.includes("tu-anon-key")
   );
 }
 
@@ -82,7 +97,7 @@ async function loadForCurrentUser() {
 
   try {
     await loadCatalog();
-    await loadOwnedFromCloud();
+    await loadCloudState();
     render();
   } catch (error) {
     els.resultCount.textContent = "Error";
@@ -99,15 +114,24 @@ async function loadCatalog() {
   state.stickers = data.map(normalizeSticker);
 }
 
-async function loadOwnedFromCloud() {
-  const { data, error } = await state.client
+async function loadCloudState() {
+  const { data: ownedData, error: ownedError } = await state.client
     .from("user_stickers")
     .select("sticker_code")
     .eq("owned", true);
 
-  if (error) throw error;
-  state.owned = new Set((data || []).map((row) => row.sticker_code));
-  localStorage.setItem(getLocalKey(), JSON.stringify({ owned: [...state.owned] }));
+  if (ownedError) throw ownedError;
+
+  const { data: repeatData, error: repeatError } = await state.client
+    .from("user_repeated_stickers")
+    .select("sticker_code, quantity")
+    .gt("quantity", 0);
+
+  if (repeatError) throw repeatError;
+
+  state.owned = new Set((ownedData || []).map((row) => row.sticker_code));
+  state.repeats = new Map((repeatData || []).map((row) => [row.sticker_code, Number(row.quantity || 0)]));
+  saveLocalSnapshot();
 }
 
 function normalizeSticker(item) {
@@ -152,12 +176,22 @@ function bindEvents() {
 
   els.stickerList.addEventListener("click", async (event) => {
     const row = event.target.closest(".sticker-chip");
-    if (!row || state.saving) return;
-    await toggleOwned(row.dataset.id);
+    if (!row) return;
+    if (state.view === "repeated") {
+      await addRepeat(row.dataset.id, -1);
+    } else {
+      await toggleOwned(row.dataset.id);
+    }
   });
 
   els.downloadWord.addEventListener("click", downloadWord);
   els.downloadPdf.addEventListener("click", downloadPdf);
+  els.scanButton.addEventListener("click", openScanner);
+  els.closeScanner.addEventListener("click", closeScanner);
+  els.manualRepeatForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    await addRepeatFromText(els.manualRepeatInput.value);
+  });
 
   els.resetAll.addEventListener("click", async () => {
     if (!confirm("Reiniciar tu avance?")) return;
@@ -196,8 +230,10 @@ async function signUp() {
 }
 
 async function signOut() {
+  closeScanner();
   await state.client.auth.signOut();
   state.owned.clear();
+  state.repeats.clear();
   render();
 }
 
@@ -228,9 +264,11 @@ function render() {
 
   const visible = getVisibleStickers();
   const owned = state.owned.size;
+  const repeats = getRepeatTotal();
   const total = state.stickers.length;
 
   els.ownedCount.textContent = owned;
+  els.repeatCount.textContent = `${repeats} repetidas`;
   els.totalCount.textContent = `/ ${total}`;
   els.viewTitle.textContent = getViewLabel();
   els.resultCount.textContent = `${visible.length} estampas`;
@@ -266,10 +304,14 @@ function renderList(stickers) {
     items.forEach((sticker) => {
       const node = els.template.content.firstElementChild.cloneNode(true);
       const owned = state.owned.has(sticker.id);
+      const repeatQuantity = state.repeats.get(sticker.id) || 0;
       node.dataset.id = sticker.id;
       node.classList.toggle("owned", owned);
+      node.classList.toggle("repeated", repeatQuantity > 0);
+      node.classList.toggle("is-pending", state.pending.has(sticker.id));
       node.querySelector("strong").textContent = sticker.title;
       node.querySelector(".sticker-text span").textContent = `#${pad(sticker.number)}`;
+      node.querySelector(".repeat-badge").textContent = repeatQuantity > 0 ? `x${repeatQuantity}` : "";
       grid.append(node);
     });
 
@@ -283,8 +325,10 @@ function renderList(stickers) {
 function getVisibleStickers() {
   return state.stickers.filter((sticker) => {
     const owned = state.owned.has(sticker.id);
+    const repeated = (state.repeats.get(sticker.id) || 0) > 0;
     if (state.view === "missing" && owned) return false;
     if (state.view === "owned" && !owned) return false;
+    if (state.view === "repeated" && !repeated) return false;
     if (!state.search) return true;
 
     return `${sticker.number} ${sticker.code} ${sticker.sigla} ${sticker.country} ${sticker.group} ${sticker.type}`
@@ -294,8 +338,9 @@ function getVisibleStickers() {
 }
 
 async function toggleOwned(id) {
+  if (state.pending.has(`owned:${id}`)) return;
   const wasOwned = state.owned.has(id);
-  state.saving = true;
+  state.pending.add(`owned:${id}`);
 
   if (wasOwned) {
     state.owned.delete(id);
@@ -304,16 +349,17 @@ async function toggleOwned(id) {
   }
   render();
 
-  const { error } = wasOwned
-    ? await state.client.from("user_stickers").delete().eq("sticker_code", id)
-    : await state.client.from("user_stickers").upsert({
-      user_id: state.user.id,
-      sticker_code: id,
-      owned: true,
-      updated_at: new Date().toISOString()
-    }, { onConflict: "user_id,sticker_code" });
+  let error = null;
+  try {
+    const result = wasOwned
+      ? await state.client.from("user_stickers").delete().eq("sticker_code", id)
+      : await saveOwned(id);
+    error = result.error;
+  } catch (requestError) {
+    error = requestError;
+  }
 
-  state.saving = false;
+  state.pending.delete(`owned:${id}`);
 
   if (error) {
     if (wasOwned) state.owned.add(id);
@@ -323,18 +369,87 @@ async function toggleOwned(id) {
     return;
   }
 
-  localStorage.setItem(getLocalKey(), JSON.stringify({ owned: [...state.owned] }));
+  saveLocalSnapshot();
+}
+
+async function saveOwned(id) {
+  return state.client.from("user_stickers").upsert({
+    user_id: state.user.id,
+    sticker_code: id,
+    owned: true,
+    updated_at: new Date().toISOString()
+  }, { onConflict: "user_id,sticker_code" });
+}
+
+async function addRepeat(id, delta = 1) {
+  if (!id || state.pending.has(`repeat:${id}`)) return;
+
+  const previousRepeat = state.repeats.get(id) || 0;
+  const nextRepeat = Math.max(0, previousRepeat + delta);
+  const wasOwned = state.owned.has(id);
+  state.pending.add(`repeat:${id}`);
+
+  if (nextRepeat > 0) {
+    state.repeats.set(id, nextRepeat);
+    state.owned.add(id);
+  } else {
+    state.repeats.delete(id);
+  }
+  render();
+
+  let error = null;
+  try {
+    const repeatResult = nextRepeat > 0
+      ? await state.client.from("user_repeated_stickers").upsert({
+        user_id: state.user.id,
+        sticker_code: id,
+        quantity: nextRepeat,
+        updated_at: new Date().toISOString()
+      }, { onConflict: "user_id,sticker_code" })
+      : await state.client.from("user_repeated_stickers").delete().eq("sticker_code", id);
+
+    if (repeatResult.error) {
+      error = repeatResult.error;
+    } else if (!wasOwned && nextRepeat > 0) {
+      const ownedResult = await saveOwned(id);
+      error = ownedResult.error;
+    }
+  } catch (requestError) {
+    error = requestError;
+  }
+
+  state.pending.delete(`repeat:${id}`);
+
+  if (error) {
+    if (previousRepeat > 0) state.repeats.set(id, previousRepeat);
+    else state.repeats.delete(id);
+    if (!wasOwned) state.owned.delete(id);
+    render();
+    setScannerMessage(`No se pudo guardar repetida: ${error.message}`);
+    return;
+  }
+
+  saveLocalSnapshot();
+  const sticker = state.stickers.find((item) => item.id === id);
+  setScannerMessage(sticker ? `Repetida agregada: ${sticker.title}` : "Repetida agregada.");
 }
 
 async function clearOwned() {
   const previous = new Set(state.owned);
+  const previousRepeats = new Map(state.repeats);
   state.owned.clear();
+  state.repeats.clear();
   render();
 
-  const { error } = await state.client.from("user_stickers").delete().neq("sticker_code", "");
+  const [ownedResult, repeatResult] = await Promise.all([
+    state.client.from("user_stickers").delete().neq("sticker_code", ""),
+    state.client.from("user_repeated_stickers").delete().neq("sticker_code", "")
+  ]);
+  const error = ownedResult.error || repeatResult.error;
 
   if (error) {
     state.owned = previous;
+    state.repeats = previousRepeats;
     render();
     alert(`No se pudo reiniciar: ${error.message}`);
     return;
@@ -355,6 +470,116 @@ function groupByCountry(stickers) {
 
 function getLocalKey() {
   return `${STORAGE_KEY_PREFIX}-${state.user?.id || "guest"}`;
+}
+
+function saveLocalSnapshot() {
+  localStorage.setItem(getLocalKey(), JSON.stringify({
+    owned: [...state.owned],
+    repeats: [...state.repeats.entries()]
+  }));
+}
+
+async function openScanner() {
+  els.scannerPanel.classList.remove("hidden");
+  setScannerMessage("Puedes escribir el codigo o intentar escanear con camara.");
+
+  if (!navigator.mediaDevices?.getUserMedia) {
+    setScannerMessage("Este navegador no permite camara aqui. Usa el campo manual.");
+    return;
+  }
+
+  try {
+    state.scannerStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "environment" },
+      audio: false
+    });
+    els.scannerVideo.srcObject = state.scannerStream;
+    await els.scannerVideo.play();
+
+    if ("BarcodeDetector" in window) {
+      startBarcodeLoop();
+    } else {
+      setScannerMessage("Camara lista. Si tu navegador no detecta codigos, escribe el codigo manualmente.");
+    }
+  } catch (error) {
+    setScannerMessage(`No se pudo abrir la camara: ${error.message}. Usa el campo manual.`);
+  }
+}
+
+function closeScanner() {
+  if (state.scannerTimer) {
+    clearInterval(state.scannerTimer);
+    state.scannerTimer = null;
+  }
+
+  if (state.scannerStream) {
+    state.scannerStream.getTracks().forEach((track) => track.stop());
+    state.scannerStream = null;
+  }
+
+  if (els.scannerVideo) els.scannerVideo.srcObject = null;
+  els.scannerPanel.classList.add("hidden");
+}
+
+function startBarcodeLoop() {
+  let detector;
+  try {
+    detector = new window.BarcodeDetector({
+      formats: ["qr_code", "code_128", "code_39", "ean_13", "ean_8", "upc_a", "upc_e"]
+    });
+  } catch (_error) {
+    setScannerMessage("Camara lista. Este navegador no soporta el detector automatico; usa el campo manual.");
+    return;
+  }
+
+  state.scannerTimer = setInterval(async () => {
+    if (!els.scannerVideo.videoWidth) return;
+
+    try {
+      const codes = await detector.detect(els.scannerVideo);
+      const value = codes[0]?.rawValue || "";
+      if (!value || value === state.lastScan) return;
+      state.lastScan = value;
+      await addRepeatFromText(value);
+    } catch (_error) {
+      setScannerMessage("No se pudo leer automaticamente. Usa el campo manual.");
+    }
+  }, 900);
+}
+
+async function addRepeatFromText(value) {
+  const sticker = findSticker(value);
+  if (!sticker) {
+    setScannerMessage("No encontre esa estampa. Prueba con MEX9, MEX 9 o 029.");
+    return;
+  }
+
+  els.manualRepeatInput.value = "";
+  await addRepeat(sticker.id, 1);
+}
+
+function findSticker(value) {
+  const normalized = normalizeLookup(value);
+  if (!normalized) return null;
+
+  return state.stickers.find((sticker) => (
+    normalizeLookup(sticker.code) === normalized ||
+    normalizeLookup(sticker.title) === normalized ||
+    String(sticker.number) === normalized ||
+    pad(sticker.number) === normalized.replace(/^#/, "")
+  ));
+}
+
+function normalizeLookup(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/^#/, "")
+    .replace(/[^A-Z0-9]/g, "");
+}
+
+function setScannerMessage(message) {
+  if (els.scannerMessage) els.scannerMessage.textContent = message;
 }
 
 function downloadWord() {
@@ -378,7 +603,7 @@ function downloadWord() {
         <p>Tengo ${state.owned.size} de ${state.stickers.length}. Vista exportada: ${getViewLabel()}.</p>
         <table>
           <thead><tr><th>#</th><th>Estampa</th><th>Seccion</th><th>Estado</th></tr></thead>
-          <tbody>${report.map((row) => `<tr class="${row.owned ? "owned" : "missing"}"><td>${pad(row.number)}</td><td>${escapeHtml(row.code)}</td><td>${escapeHtml(row.country)}</td><td>${row.status}</td></tr>`).join("")}</tbody>
+          <tbody>${report.map((row) => `<tr class="${row.owned ? "owned" : "missing"}"><td>${pad(row.number)}</td><td>${escapeHtml(row.code)}</td><td>${escapeHtml(row.country)}</td><td>${row.status}${row.repeats ? ` / x${row.repeats}` : ""}</td></tr>`).join("")}</tbody>
         </table>
       </body>
     </html>
@@ -394,7 +619,7 @@ function downloadPdf() {
     { text: `Vista: ${getViewLabel()}`, color: "black", size: 11 },
     { text: "", color: "black", size: 10 },
     ...rows.map((row) => ({
-      text: `${row.status}  #${pad(row.number)}  ${row.code}  ${row.country}`,
+      text: `${row.status}${row.repeats ? ` x${row.repeats}` : ""}  #${pad(row.number)}  ${row.code}  ${row.country}`,
       color: row.owned ? "green" : "red",
       size: 10
     }))
@@ -408,6 +633,7 @@ function buildReportRows() {
     code: sticker.code,
     country: sticker.country,
     owned: state.owned.has(sticker.id),
+    repeats: state.repeats.get(sticker.id) || 0,
     status: state.owned.has(sticker.id) ? "Tengo" : "Falta"
   }));
 }
@@ -485,7 +711,12 @@ function downloadBlob(blob, filename) {
 function getViewLabel() {
   if (state.view === "missing") return "Me faltan";
   if (state.view === "owned") return "Ya tengo";
+  if (state.view === "repeated") return "Repetidas";
   return "Todas";
+}
+
+function getRepeatTotal() {
+  return [...state.repeats.values()].reduce((sum, value) => sum + value, 0);
 }
 
 function pdfColor(color) {

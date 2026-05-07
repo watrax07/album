@@ -1,0 +1,8 @@
+node_modules/
+*.log
+verify-app.cjs
+*.png
+*.pdf
+*.doc
+*.csv
+*.txt

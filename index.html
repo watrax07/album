@@ -42,6 +42,7 @@
         <div class="score">
           <strong id="ownedCount">0</strong>
           <span id="totalCount">/ 0</span>
+          <small id="repeatCount">0 repetidas</small>
         </div>
       </header>
 
@@ -50,6 +51,7 @@
           <button class="active" type="button" data-view="missing">Me faltan</button>
           <button type="button" data-view="owned">Ya tengo</button>
           <button type="button" data-view="all">Todas</button>
+          <button type="button" data-view="repeated">Repetidas</button>
         </div>
 
         <label class="search">
@@ -60,9 +62,26 @@
         <div class="actions">
           <button id="downloadWord" type="button">Word</button>
           <button id="downloadPdf" type="button">PDF</button>
+          <button id="scanButton" type="button">Escanear</button>
           <button id="resetAll" class="quiet" type="button">Reiniciar</button>
           <button id="logoutButton" class="quiet" type="button">Salir</button>
         </div>
+      </section>
+
+      <section id="scannerPanel" class="scanner-panel hidden">
+        <div class="scanner-head">
+          <h2>Agregar repetida</h2>
+          <button id="closeScanner" class="quiet" type="button">Cerrar</button>
+        </div>
+        <video id="scannerVideo" playsinline muted></video>
+        <form id="manualRepeatForm" class="manual-repeat">
+          <label>
+            <span>Codigo o numero</span>
+            <input id="manualRepeatInput" type="text" placeholder="MEX9, MEX 9 o 029">
+          </label>
+          <button type="submit">Agregar</button>
+        </form>
+        <p id="scannerMessage"></p>
       </section>
 
       <section class="list-panel">
@@ -82,6 +101,7 @@
           <strong></strong>
           <span></span>
         </div>
+        <small class="repeat-badge"></small>
       </button>
     </template>
 
