@@ -11,7 +11,6 @@ const state = {
   user: null,
   client: null,
   scannerStream: null,
-  scannerTimer: null,
   lastScan: ""
 };
 
@@ -39,6 +38,10 @@ const els = {
   scanButton: document.querySelector("#scanButton"),
   scannerPanel: document.querySelector("#scannerPanel"),
   scannerVideo: document.querySelector("#scannerVideo"),
+  scannerCanvas: document.querySelector("#scannerCanvas"),
+  captureScan: document.querySelector("#captureScan"),
+  retryScan: document.querySelector("#retryScan"),
+  scanResults: document.querySelector("#scanResults"),
   closeScanner: document.querySelector("#closeScanner"),
   manualRepeatForm: document.querySelector("#manualRepeatForm"),
   manualRepeatInput: document.querySelector("#manualRepeatInput"),
@@ -200,6 +203,9 @@ function bindEvents() {
   els.downloadPdf.addEventListener("click", downloadPdf);
   els.scanButton.addEventListener("click", openScanner);
   els.closeScanner.addEventListener("click", closeScanner);
+  els.captureScan.addEventListener("click", captureAndReadStickers);
+  els.retryScan.addEventListener("click", resetScannerCapture);
+  els.scanResults.addEventListener("click", handleScanResultClick);
   els.manualRepeatForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     await addRepeatFromText(els.manualRepeatInput.value);
@@ -507,7 +513,10 @@ function saveLocalSnapshot() {
 
 async function openScanner() {
   els.scannerPanel.classList.remove("hidden");
-  setScannerMessage("Puedes escribir el codigo o intentar escanear con camara.");
+  els.scanResults.classList.add("hidden");
+  els.scanResults.innerHTML = "";
+  els.retryScan.classList.add("hidden");
+  setScannerMessage("Centra bien todas las estampas y confirma cuando el codigo se vea claro.");
 
   if (!navigator.mediaDevices?.getUserMedia) {
     setScannerMessage("Este navegador no permite camara aqui. Usa el campo manual.");
@@ -521,23 +530,12 @@ async function openScanner() {
     });
     els.scannerVideo.srcObject = state.scannerStream;
     await els.scannerVideo.play();
-
-    if ("BarcodeDetector" in window) {
-      startBarcodeLoop();
-    } else {
-      setScannerMessage("Camara lista. Si tu navegador no detecta codigos, escribe el codigo manualmente.");
-    }
   } catch (error) {
     setScannerMessage(`No se pudo abrir la camara: ${error.message}. Usa el campo manual.`);
   }
 }
 
 function closeScanner() {
-  if (state.scannerTimer) {
-    clearInterval(state.scannerTimer);
-    state.scannerTimer = null;
-  }
-
   if (state.scannerStream) {
     state.scannerStream.getTracks().forEach((track) => track.stop());
     state.scannerStream = null;
@@ -547,30 +545,135 @@ function closeScanner() {
   els.scannerPanel.classList.add("hidden");
 }
 
-function startBarcodeLoop() {
-  let detector;
-  try {
-    detector = new window.BarcodeDetector({
-      formats: ["qr_code", "code_128", "code_39", "ean_13", "ean_8", "upc_a", "upc_e"]
-    });
-  } catch (_error) {
-    setScannerMessage("Camara lista. Este navegador no soporta el detector automatico; usa el campo manual.");
+async function captureAndReadStickers() {
+  if (!els.scannerVideo.videoWidth) {
+    setScannerMessage("La camara aun no esta lista.");
     return;
   }
 
-  state.scannerTimer = setInterval(async () => {
-    if (!els.scannerVideo.videoWidth) return;
+  const canvas = els.scannerCanvas;
+  const maxWidth = 1400;
+  const scale = Math.min(1, maxWidth / els.scannerVideo.videoWidth);
+  canvas.width = Math.round(els.scannerVideo.videoWidth * scale);
+  canvas.height = Math.round(els.scannerVideo.videoHeight * scale);
+  canvas.getContext("2d").drawImage(els.scannerVideo, 0, 0, canvas.width, canvas.height);
 
-    try {
-      const codes = await detector.detect(els.scannerVideo);
-      const value = codes[0]?.rawValue || "";
-      if (!value || value === state.lastScan) return;
-      state.lastScan = value;
-      await addRepeatFromText(value);
-    } catch (_error) {
-      setScannerMessage("No se pudo leer automaticamente. Usa el campo manual.");
+  setScannerMessage("Leyendo codigos impresos...");
+  els.captureScan.disabled = true;
+
+  try {
+    const text = await readTextFromCanvas(canvas);
+    const matches = extractStickerCodes(text);
+    renderScanResults(matches);
+  } catch (error) {
+    setScannerMessage(`No se pudo leer la foto: ${error.message}. Puedes escribir el codigo manualmente.`);
+  } finally {
+    els.captureScan.disabled = false;
+    els.retryScan.classList.remove("hidden");
+  }
+}
+
+async function readTextFromCanvas(canvas) {
+  await ensureTesseract();
+  const result = await window.Tesseract.recognize(canvas, "eng", {
+    tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 #.-"
+  });
+  return result.data?.text || "";
+}
+
+function ensureTesseract() {
+  if (window.Tesseract) return Promise.resolve();
+
+  return new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
+    script.onload = resolve;
+    script.onerror = () => reject(new Error("No se pudo cargar OCR"));
+    document.head.append(script);
+  });
+}
+
+function extractStickerCodes(text) {
+  const normalized = String(text || "").toUpperCase().replace(/\s+/g, " ");
+  const found = new Map();
+  const regex = /\b([A-Z]{2,4})\s*[-.]?\s*(\d{1,3})\b/g;
+  let match;
+
+  while ((match = regex.exec(normalized))) {
+    const code = `${match[1]}${match[2]}`;
+    const sticker = findSticker(code);
+    if (sticker) found.set(sticker.id, sticker);
+  }
+
+  return [...found.values()];
+}
+
+function renderScanResults(stickers) {
+  els.scanResults.classList.remove("hidden");
+  els.scanResults.innerHTML = "";
+
+  if (!stickers.length) {
+    els.scanResults.innerHTML = `
+      <div class="empty">No detecte estampas. Escribe el codigo manualmente o toma otra foto con mas luz.</div>
+    `;
+    setScannerMessage("No detecte codigos como NZL 15. Prueba acercando la camara.");
+    return;
+  }
+
+  const fragment = document.createDocumentFragment();
+  stickers.forEach((sticker) => {
+    const row = document.createElement("div");
+    row.className = "scan-result";
+    row.dataset.id = sticker.id;
+    row.innerHTML = `
+      <input value="${escapeHtml(sticker.title)}" aria-label="Editar codigo detectado">
+      <button class="save-scan" type="button">Agregar</button>
+      <button class="remove-scan" type="button">Eliminar</button>
+    `;
+    fragment.append(row);
+  });
+
+  els.scanResults.append(fragment);
+  setScannerMessage(`Detecte ${stickers.length} estampa${stickers.length === 1 ? "" : "s"}. Revisa, edita o elimina antes de agregar.`);
+}
+
+async function handleScanResultClick(event) {
+  const row = event.target.closest(".scan-result");
+  if (!row) return;
+
+  if (event.target.closest(".remove-scan")) {
+    row.remove();
+    if (!els.scanResults.querySelector(".scan-result")) els.scanResults.classList.add("hidden");
+    return;
+  }
+
+  if (event.target.closest(".save-scan")) {
+    const input = row.querySelector("input");
+    const sticker = findSticker(input.value);
+    if (!sticker) {
+      input.focus();
+      setScannerMessage("No encontre ese codigo. Editalo, por ejemplo NZL 15.");
+      return;
     }
-  }, 900);
+
+    await addRepeat(sticker.id, 1);
+    row.remove();
+    if (!els.scanResults.querySelector(".scan-result")) {
+      closeScanner();
+      state.view = "repeated";
+      document.querySelectorAll("[data-view]").forEach((button) => {
+        button.classList.toggle("active", button.dataset.view === "repeated");
+      });
+      render();
+    }
+  }
+}
+
+function resetScannerCapture() {
+  els.scanResults.classList.add("hidden");
+  els.scanResults.innerHTML = "";
+  els.retryScan.classList.add("hidden");
+  setScannerMessage("Centra bien todas las estampas y confirma cuando el codigo se vea claro.");
 }
 
 async function addRepeatFromText(value) {

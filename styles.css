@@ -304,12 +304,111 @@ button {
   padding: 0 12px;
 }
 
-#scannerVideo {
-  width: 100%;
-  max-height: 310px;
+.camera-box {
+  position: relative;
+  overflow: hidden;
   border-radius: 8px;
   background: #111;
+}
+
+#scannerVideo {
+  display: block;
+  width: 100%;
+  max-height: 310px;
   object-fit: cover;
+}
+
+.camera-guide {
+  position: absolute;
+  inset: 12px;
+  display: grid;
+  place-items: center;
+  border: 2px dashed rgba(255,255,255,0.72);
+  border-radius: 8px;
+  color: #fff;
+  pointer-events: none;
+  text-align: center;
+  text-shadow: 0 1px 8px rgba(0,0,0,0.75);
+}
+
+.camera-guide strong,
+.camera-guide span {
+  display: block;
+  max-width: 280px;
+}
+
+.camera-guide strong {
+  align-self: end;
+  font-size: 1.05rem;
+}
+
+.camera-guide span {
+  align-self: start;
+  margin-top: 6px;
+  font-size: 0.84rem;
+  font-weight: 800;
+}
+
+.scanner-actions {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+}
+
+.scanner-actions button {
+  min-height: 42px;
+  border: 1px solid var(--green);
+  border-radius: 8px;
+  background: var(--green);
+  color: #fff;
+  font-weight: 900;
+  padding: 0 14px;
+}
+
+.scanner-actions .quiet {
+  border-color: var(--line);
+  background: #fff;
+  color: var(--red);
+}
+
+.scan-results {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 10px;
+}
+
+.scan-result {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.scan-result input {
+  min-width: 0;
+  height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 10px;
+}
+
+.scan-result button {
+  min-height: 38px;
+  border: 1px solid var(--green);
+  border-radius: 8px;
+  background: var(--green);
+  color: #fff;
+  font-weight: 900;
+  padding: 0 10px;
+}
+
+.scan-result .remove-scan {
+  border-color: var(--line);
+  background: #fff;
+  color: var(--red);
 }
 
 .manual-repeat {
@@ -529,6 +628,11 @@ button {
   }
 
   .manual-repeat {
+    grid-template-columns: 1fr;
+  }
+
+  .scanner-actions,
+  .scan-result {
     grid-template-columns: 1fr;
   }
 

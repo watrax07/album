@@ -70,14 +70,26 @@
 
       <section id="scannerPanel" class="scanner-panel hidden">
         <div class="scanner-head">
-          <h2>Agregar repetida</h2>
+          <h2>Escanear repetidas</h2>
           <button id="closeScanner" class="quiet" type="button">Cerrar</button>
         </div>
-        <video id="scannerVideo" playsinline muted></video>
+        <div class="camera-box">
+          <video id="scannerVideo" playsinline muted></video>
+          <div class="camera-guide">
+            <strong>Centra bien todas las estampas</strong>
+            <span>Deja visible el codigo de arriba, por ejemplo NZL 15.</span>
+          </div>
+        </div>
+        <div class="scanner-actions">
+          <button id="captureScan" type="button">Se ve bien, escanear</button>
+          <button id="retryScan" class="quiet hidden" type="button">Tomar otra</button>
+        </div>
+        <canvas id="scannerCanvas" class="hidden"></canvas>
+        <div id="scanResults" class="scan-results hidden"></div>
         <form id="manualRepeatForm" class="manual-repeat">
           <label>
             <span>Codigo o numero</span>
-            <input id="manualRepeatInput" type="text" placeholder="MEX9, MEX 9 o 029">
+            <input id="manualRepeatInput" type="text" placeholder="NZL15, MEX 9 o 029">
           </label>
           <button type="submit">Agregar</button>
         </form>
