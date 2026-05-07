@@ -127,7 +127,9 @@ async function loadCloudState() {
     .select("sticker_code, quantity")
     .gt("quantity", 0);
 
-  if (repeatError) throw repeatError;
+  if (repeatError) {
+    console.warn("No se pudieron cargar repetidas. Ejecuta supabase-schema.sql completo.", repeatError);
+  }
 
   state.owned = new Set((ownedData || []).map((row) => row.sticker_code));
   state.repeats = new Map((repeatData || []).map((row) => [row.sticker_code, Number(row.quantity || 0)]));
@@ -272,8 +274,22 @@ function render() {
   els.totalCount.textContent = `/ ${total}`;
   els.viewTitle.textContent = getViewLabel();
   els.resultCount.textContent = `${visible.length} estampas`;
+  renderTabCounts();
 
   renderList(visible);
+}
+
+function renderTabCounts() {
+  const total = state.stickers.length;
+  const owned = state.owned.size;
+  const repeated = state.repeats.size;
+  const missing = total - owned;
+  const counts = { missing, owned, all: total, repeated };
+
+  document.querySelectorAll("[data-view]").forEach((button) => {
+    const label = button.dataset.label || button.textContent;
+    button.textContent = `${label} (${counts[button.dataset.view] ?? 0})`;
+  });
 }
 
 function renderList(stickers) {
